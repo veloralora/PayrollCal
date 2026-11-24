@@ -1,0 +1,6 @@
+{
+  "name": "Hitung Gajian Pro",
+  "description": "Aplikasi hitung, koreksi, scan OCR, dan rekap gaji karyawan secara lokal dengan rumus N1 x N2 / 12, pembulatan khusus ke bawah, potongan PT opsional, riwayat, dan backup/restore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

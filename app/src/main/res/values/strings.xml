@@ -1,0 +1,116 @@
+<resources>
+    <string name="app_name">Hitung Gajian Pro</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Beranda</string>
+    <string name="nav_calculator">Hitung</string>
+    <string name="nav_employees">Data</string>
+    <string name="nav_summary">Total</string>
+    <string name="nav_history">Riwayat</string>
+
+    <!-- Home -->
+    <string name="home_subtitle">Kalkulator &amp; Rekap Gaji Akurat</string>
+    <string name="home_formula_badge">Rumus Utama: Jumlah × Harga ÷ 12 = N</string>
+    <string name="home_local_badge">100% Lokal di Perangkat • Tanpa Server</string>
+    <string name="home_action_calculate">Hitung Gaji</string>
+    <string name="home_action_calculate_desc">Input Jumlah &amp; Harga dengan rumus akurat</string>
+    <string name="home_action_scan">Scan Foto</string>
+    <string name="home_action_scan_desc">Baca angka dari foto via OCR offline</string>
+    <string name="home_action_employees">Data Karyawan</string>
+    <string name="home_action_employees_desc">Kelola rincian &amp; potongan PT</string>
+    <string name="home_action_history">Riwayat</string>
+    <string name="home_action_history_desc">Buka kembali hitungan sebelumnya</string>
+    <string name="home_summary_title">Ringkasan Aktif Saat Ini</string>
+    <string name="home_total_employees_format">%1$d Karyawan • %2$d Baris</string>
+    <string name="home_view_total">Lihat Rincian Total</string>
+
+    <!-- Calculator -->
+    <string name="calc_title">Hitung Gaji</string>
+    <string name="calc_employee_name_label">Nama Karyawan / Penerima</string>
+    <string name="calc_employee_name_hint">Contoh: BPK, Budi, Siti</string>
+    <string name="calc_select_existing">Pilih dari Data Ada</string>
+    <string name="calc_rows_title">Daftar Perhitungan (Jumlah × Harga ÷ 12)</string>
+    <string name="calc_add_row">Tambah Baris</string>
+    <string name="calc_n1_label">Jumlah</string>
+    <string name="calc_n2_label">Harga</string>
+    <string name="calc_before_rounding">Sebelum pembulatan</string>
+    <string name="calc_after_rounding">Setelah pembulatan</string>
+    <string name="calc_rounding_title">Aturan Pembulatan ke Bawah</string>
+    <string name="calc_rounding_none">Tanpa Pembulatan (Nilai Asli)</string>
+    <string name="calc_rounding_custom">Kustom</string>
+    <string name="calc_pt_section_title">Potongan PT (Opsional)</string>
+    <string name="calc_pt_toggle_label">Ada Potongan PT?</string>
+    <string name="calc_pt_amount_label">Nominal Potongan PT (Rp)</string>
+    <string name="calc_pt_note_label">Keterangan PT (Opsional)</string>
+    <string name="calc_pt_not_applied">Tidak ada potongan PT — hasil tidak dikurangi.</string>
+    <string name="calc_total_before_pt">TOTAL (Sebelum PT)</string>
+    <string name="calc_total_pt">Potongan PT</string>
+    <string name="calc_total_final">TOTAL AKHIR</string>
+    <string name="calc_save_button">Simpan ke Data Karyawan</string>
+    <string name="calc_update_button">Perbarui Data Karyawan</string>
+    <string name="calc_reset_button">Bersihkan</string>
+
+    <!-- Scan Foto OCR -->
+    <string name="scan_title">Scan Foto OCR</string>
+    <string name="scan_subtitle">Foto diproses 100% di perangkat menggunakan ML Kit OCR</string>
+    <string name="scan_pick_gallery">Pilih Foto Galeri</string>
+    <string name="scan_take_photo">Ambil Foto Kamera</string>
+    <string name="scan_processing">Membaca angka dari foto…</string>
+    <string name="scan_review_banner">Periksa dan koreksi angka di bawah sebelum menyimpan. Data tidak akan disimpan otomatis tanpa konfirmasi Anda.</string>
+    <string name="scan_detected_rows">Hasil Pembacaan Angka (Jumlah &amp; Harga)</string>
+    <string name="scan_raw_text_toggle">Lihat Teks Asli OCR</string>
+    <string name="scan_confirm_save">Konfirmasi &amp; Simpan ke Data</string>
+    <string name="scan_send_to_calc">Buka di Kalkulator</string>
+    <string name="scan_no_numbers">Belum ada pasangan angka terdeteksi. Anda dapat menambah baris manual atau memilih foto yang lebih jelas.</string>
+    <string name="scan_camera_denied">Izin kamera ditolak. Anda tetap dapat mengunggah foto dari Galeri.</string>
+
+    <!-- Data Karyawan -->
+    <string name="employees_title">Data Karyawan</string>
+    <string name="employees_empty_title">Belum Ada Data Karyawan</string>
+    <string name="employees_empty_desc">Mulai hitung gaji atau scan foto untuk menambahkan rincian gaji karyawan.</string>
+    <string name="employees_add_new">Tambah Karyawan</string>
+    <string name="employees_edit">Edit</string>
+    <string name="employees_delete">Hapus</string>
+    <string name="employees_delete_confirm_title">Hapus Data Karyawan?</string>
+    <string name="employees_delete_confirm_msg">Semua rincian perhitungan milik %1$s akan dihapus permanen. Lanjutkan?</string>
+    <string name="employees_clear_all">Kosongkan Data Aktif</string>
+    <string name="employees_clear_all_msg">Semua data karyawan pada sesi aktif akan dihapus. Pastikan sudah menyimpan ke Riwayat bila diperlukan.</string>
+
+    <!-- Total Keseluruhan -->
+    <string name="summary_title">Total Keseluruhan</string>
+    <string name="summary_empty_title">Belum Ada Perhitungan</string>
+    <string name="summary_empty_desc">Tambahkan data karyawan terlebih dahulu untuk melihat rekap total keseluruhan.</string>
+    <string name="summary_gross_total">Total Sebelum PT</string>
+    <string name="summary_pt_total">Total Potongan PT</string>
+    <string name="summary_grand_total">TOTAL AKHIR KESELURUHAN</string>
+    <string name="summary_save_history">Simpan ke Riwayat</string>
+    <string name="summary_copy_text">Salin Ringkasan</string>
+    <string name="summary_no_double_count_note">Setiap karyawan dihitung tepat satu kali berdasarkan ID unik.</string>
+
+    <!-- Riwayat -->
+    <string name="history_title">Riwayat Perhitungan</string>
+    <string name="history_empty_title">Belum Ada Riwayat Tersimpan</string>
+    <string name="history_empty_desc">Simpan hasil perhitungan dari halaman Total agar dapat dibuka dan diperiksa kembali kapan saja.</string>
+    <string name="history_open_detail">Lihat Rincian</string>
+    <string name="history_load_active">Muat ke Data Aktif</string>
+    <string name="history_delete_confirm_title">Hapus Riwayat?</string>
+    <string name="history_delete_confirm_msg">Riwayat "%1$s" akan dihapus secara permanen dari perangkat ini.</string>
+
+    <!-- Settings & Backup -->
+    <string name="settings_title">Pengaturan &amp; Backup</string>
+    <string name="settings_rounding_section">Aturan Pembulatan Khusus ke Bawah</string>
+    <string name="settings_backup_section">Backup &amp; Restore Lokal</string>
+    <string name="settings_backup_desc">Simpan cadangan data karyawan dan riwayat ke file JSON di perangkat Anda, atau pulihkan dari cadangan sebelumnya.</string>
+    <string name="settings_export_button">Backup Data (Ekspor JSON)</string>
+    <string name="settings_import_button">Restore Data (Impor JSON)</string>
+    <string name="settings_privacy_note">Seluruh data gaji dan riwayat disimpan secara lokal di perangkat Anda menggunakan Room Database dan tidak pernah dikirim ke server.</string>
+
+    <!-- Common Actions -->
+    <string name="action_cancel">Batal</string>
+    <string name="action_confirm">Konfirmasi</string>
+    <string name="action_save">Simpan</string>
+    <string name="action_delete">Hapus</string>
+    <string name="action_close">Tutup</string>
+    <string name="action_back">Kembali</string>
+    <string name="action_settings">Pengaturan</string>
+</resources>
