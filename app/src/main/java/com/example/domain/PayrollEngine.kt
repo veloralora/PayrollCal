@@ -39,13 +39,21 @@ object PayrollEngine {
     }
 
     /**
-     * Computes a single N1 × N2 [op operand] = N row.
+     * Computes a single Jumlah × Harga [op operand] = N row.
+     * Respects per-row formulaEnabledOverride so disabling ÷ 12 on one row never affects any other row.
      */
     fun computeRow(
         row: CalculationRowItem,
         formula: FormulaConfig,
         roundingConfig: RoundingConfig = RoundingConfig()
     ): ComputedRowResult {
+        val effectiveRowEnabled = row.formulaEnabledOverride ?: formula.enabled
+        val rowFormula = if (effectiveRowEnabled == formula.enabled) {
+            formula
+        } else {
+            formula.copy(enabled = effectiveRowEnabled)
+        }
+
         val n1 = PayrollCalculator.parseNumber(row.n1Text)
         val n2 = PayrollCalculator.parseNumber(row.n2Text)
         if (n1 == null || n2 == null) {
@@ -57,14 +65,14 @@ object PayrollEngine {
                 product = BigDecimal.ZERO,
                 afterFormulaRaw = BigDecimal.ZERO,
                 afterFormula = BigDecimal.ZERO,
-                formulaApplied = formula
+                formulaApplied = rowFormula
             )
         }
 
         val cleanN1 = n1.stripTrailingZerosNormalized()
         val cleanN2 = n2.stripTrailingZerosNormalized()
         val product = cleanN1.multiply(cleanN2).stripTrailingZerosNormalized()
-        val afterFormulaRaw = applyFormula(product, formula)
+        val afterFormulaRaw = applyFormula(product, rowFormula)
         val afterFormula = PayrollCalculator.applyCustomRounding(afterFormulaRaw, roundingConfig)
 
         return ComputedRowResult(
@@ -75,16 +83,35 @@ object PayrollEngine {
             product = product,
             afterFormulaRaw = afterFormulaRaw,
             afterFormula = afterFormula,
-            formulaApplied = formula
+            formulaApplied = rowFormula
         )
     }
 
     /**
+     * Resolves an employee's own isolated adjustment columns.
+     * For backwards compatibility with older saved records that stored shared columns,
+     * only legacy columns that actually have a value filled for THIS employee are included.
+     */
+    fun resolveMemberColumns(
+        member: CalculationMemberEntry,
+        legacyColumns: List<AdjustmentColumn>
+    ): List<AdjustmentColumn> {
+        if (legacyColumns.isEmpty()) return member.adjustmentColumns
+        val existingIds = member.adjustmentColumns.mapTo(HashSet()) { it.id }
+        val migratedLegacy = legacyColumns.filter { col ->
+            col.id !in existingIds && !member.adjustmentValues[col.id].isNullOrBlank()
+        }
+        return if (migratedLegacy.isEmpty()) member.adjustmentColumns
+        else member.adjustmentColumns + migratedLegacy
+    }
+
+    /**
      * Computes an employee's full calculation:
-     * 1. Computes each N1 × N2 row and applies active FormulaConfig (or skips if disabled).
-     * 2. Sums all valid rows into subtotalAfterFormula.
-     * 3. Applies filled additions (+) and deductions (−). Empty cells stay null and skipped;
-     *    explicit "0" is preserved as BigDecimal.ZERO.
+     * 1. Computes each Jumlah × Harga row using its own row-level formula toggle.
+     * 2. Sums all valid rows into subtotalAfterFormula (no re-rounding of the sum).
+     * 3. Applies ONLY this employee's isolated additions (+) and deductions (−).
+     *    Empty cells stay null and skipped; explicit "0" is preserved as BigDecimal.ZERO.
+     * 4. Tracks totalAdditions and totalDeductions separately so grand totals exclude deductions.
      */
     fun computeMember(
         member: CalculationMemberEntry,
@@ -107,10 +134,12 @@ object PayrollEngine {
         subtotalRaw = subtotalRaw.stripTrailingZerosNormalized()
         subtotalRounded = subtotalRounded.stripTrailingZerosNormalized()
 
-        val adjAmounts = LinkedHashMap<String, BigDecimal?>(columns.size)
-        var netAdj = BigDecimal.ZERO
+        val effectiveCols = resolveMemberColumns(member, columns)
+        val adjAmounts = LinkedHashMap<String, BigDecimal?>(effectiveCols.size)
+        var totalAdditions = BigDecimal.ZERO
+        var totalDeductions = BigDecimal.ZERO
 
-        for (col in columns) {
+        for (col in effectiveCols) {
             val rawCell = member.adjustmentValues[col.id]?.trim().orEmpty()
             if (rawCell.isEmpty()) {
                 adjAmounts[col.id] = null
@@ -123,26 +152,41 @@ object PayrollEngine {
             }
             val cleanCell = parsedCell.stripTrailingZerosNormalized()
             adjAmounts[col.id] = cleanCell
-            netAdj = when (col.operation) {
-                AdjustmentOperation.ADD -> netAdj.add(cleanCell)
-                AdjustmentOperation.SUBTRACT -> netAdj.subtract(cleanCell)
+            when (col.operation) {
+                AdjustmentOperation.ADD -> totalAdditions = totalAdditions.add(cleanCell)
+                AdjustmentOperation.SUBTRACT -> totalDeductions = totalDeductions.add(cleanCell)
             }
         }
 
+        totalAdditions = totalAdditions.stripTrailingZerosNormalized()
+        totalDeductions = totalDeductions.stripTrailingZerosNormalized()
+        val netAdj = totalAdditions.subtract(totalDeductions).stripTrailingZerosNormalized()
+        val totalExcludingDeductions = subtotalRounded.add(totalAdditions).stripTrailingZerosNormalized()
         val finalTotal = subtotalRounded.add(netAdj).stripTrailingZerosNormalized()
 
         return ComputedMemberResult(
             member = member,
+            effectiveColumns = effectiveCols,
             computedRows = computedRows,
             validRowCount = validCount,
             subtotalRaw = subtotalRaw,
             subtotalAfterFormula = subtotalRounded,
             adjustmentAmounts = adjAmounts,
-            netAdjustment = netAdj.stripTrailingZerosNormalized(),
+            totalAdditions = totalAdditions,
+            totalDeductions = totalDeductions,
+            netAdjustment = netAdj,
+            totalExcludingDeductions = totalExcludingDeductions,
             finalTotal = finalTotal
         )
     }
 
+    /**
+     * Computes calculation-level totals:
+     * - totalBeforeAdjustments: pure sum before any additions or deductions.
+     * - totalAdditions: sum of all per-employee additions (+).
+     * - totalDeductions: sum of all per-employee deductions (−) for reference ONLY.
+     * - grandTotal: totalBeforeAdjustments + totalAdditions (deductions are NEVER subtracted from total).
+     */
     fun computeCalculation(
         calculationId: Long,
         scheduledDateTimeMillis: Long,
@@ -160,14 +204,18 @@ object PayrollEngine {
 
         var totalRawBeforeRounding = BigDecimal.ZERO
         var totalBeforeAdj = BigDecimal.ZERO
-        var totalAdj = BigDecimal.ZERO
+        var totalAdditions = BigDecimal.ZERO
+        var totalDeductions = BigDecimal.ZERO
+        var totalNetAdj = BigDecimal.ZERO
         var grandTotal = BigDecimal.ZERO
 
         for (item in computedMembers) {
             totalRawBeforeRounding = totalRawBeforeRounding.add(item.subtotalRaw)
             totalBeforeAdj = totalBeforeAdj.add(item.subtotalAfterFormula)
-            totalAdj = totalAdj.add(item.netAdjustment)
-            grandTotal = grandTotal.add(item.finalTotal)
+            totalAdditions = totalAdditions.add(item.totalAdditions)
+            totalDeductions = totalDeductions.add(item.totalDeductions)
+            totalNetAdj = totalNetAdj.add(item.netAdjustment)
+            grandTotal = grandTotal.add(item.totalExcludingDeductions)
         }
 
         return ComputedCalculationSummary(
@@ -179,19 +227,38 @@ object PayrollEngine {
             members = computedMembers,
             totalRawBeforeRounding = totalRawBeforeRounding.stripTrailingZerosNormalized(),
             totalBeforeAdjustments = totalBeforeAdj.stripTrailingZerosNormalized(),
-            totalAdjustments = totalAdj.stripTrailingZerosNormalized(),
+            totalAdditions = totalAdditions.stripTrailingZerosNormalized(),
+            totalDeductions = totalDeductions.stripTrailingZerosNormalized(),
+            totalAdjustments = totalNetAdj.stripTrailingZerosNormalized(),
             grandTotal = grandTotal.stripTrailingZerosNormalized()
         )
     }
 
-    fun sumSavedCalculations(calculations: List<ComputedCalculationSummary>): BigDecimal {
+    fun summarizeSavedCalculations(calculations: List<ComputedCalculationSummary>): MonthlyTotalSummary {
         val unique = calculations.distinctBy { it.calculationId }
-        var total = BigDecimal.ZERO
+        var totalRaw = BigDecimal.ZERO
+        var totalBeforeAdj = BigDecimal.ZERO
+        var totalAdd = BigDecimal.ZERO
+        var totalDed = BigDecimal.ZERO
+        var grand = BigDecimal.ZERO
         for (calc in unique) {
-            total = total.add(calc.grandTotal)
+            totalRaw = totalRaw.add(calc.totalRawBeforeRounding)
+            totalBeforeAdj = totalBeforeAdj.add(calc.totalBeforeAdjustments)
+            totalAdd = totalAdd.add(calc.totalAdditions)
+            totalDed = totalDed.add(calc.totalDeductions)
+            grand = grand.add(calc.grandTotal)
         }
-        return total.stripTrailingZerosNormalized()
+        return MonthlyTotalSummary(
+            totalRawBeforeRounding = totalRaw.stripTrailingZerosNormalized(),
+            totalBeforeAdjustments = totalBeforeAdj.stripTrailingZerosNormalized(),
+            totalAdditions = totalAdd.stripTrailingZerosNormalized(),
+            totalDeductions = totalDed.stripTrailingZerosNormalized(),
+            grandTotal = grand.stripTrailingZerosNormalized()
+        )
     }
+
+    fun sumSavedCalculations(calculations: List<ComputedCalculationSummary>): BigDecimal =
+        summarizeSavedCalculations(calculations).grandTotal
 
     fun filterCalculationsByMonth(
         calculations: List<ComputedCalculationSummary>,
@@ -210,11 +277,12 @@ object PayrollEngine {
         val formulaPart = if (row.formulaApplied.enabled) " ${row.formulaApplied.shortLabel()}" else ""
         val rawStr = PayrollCalculator.formatRawNumber(row.afterFormulaRaw)
         val finalStr = PayrollCalculator.formatNumber(row.afterFormula, 2)
-        return if (row.isRoundedDifferent) {
+        val base = if (row.isRoundedDifferent) {
             "$n1Str × $n2Str$formulaPart = $rawStr → $finalStr"
         } else {
             "$n1Str × $n2Str$formulaPart = $rawStr"
         }
+        return if (row.row.note.isNotBlank()) "$base [${row.row.note.trim()}]" else base
     }
 
     fun formatCalculationLedgerText(summary: ComputedCalculationSummary): String = buildString {
@@ -236,7 +304,7 @@ object PayrollEngine {
             appendLine("  TOTAL ASLI (SEBELUM PEMBULATAN) = ${PayrollCalculator.formatRawNumber(m.subtotalRaw)}")
             appendLine("  TOTAL PENJUMLAHAN = ${PayrollCalculator.formatRupiah(m.subtotalAfterFormula)}")
             var hasAnyAdj = false
-            summary.columns.forEach { col ->
+            m.effectiveColumns.forEach { col ->
                 val v = m.adjustmentAmounts[col.id]
                 if (v != null) {
                     hasAnyAdj = true
@@ -244,35 +312,58 @@ object PayrollEngine {
                 }
             }
             if (hasAnyAdj) {
-                appendLine("  TOTAL AKHIR = ${PayrollCalculator.formatRupiah(m.finalTotal)}")
+                appendLine("  TOTAL AKHIR KARYAWAN = ${PayrollCalculator.formatRupiah(m.finalTotal)}")
             }
         }
         appendLine("============================")
-        append("TOTAL PERHITUNGAN = ${PayrollCalculator.formatRupiah(summary.grandTotal)}")
+        appendLine("TOTAL SEBELUM DIPOTONG & DITAMBAH = ${PayrollCalculator.formatRupiah(summary.totalBeforeAdjustments)}")
+        if (summary.totalAdditions.signum() != 0) {
+            appendLine("TOTAL PENAMBAHAN (+) = ${PayrollCalculator.formatRupiah(summary.totalAdditions)}")
+        }
+        if (summary.totalDeductions.signum() != 0) {
+            appendLine("INFO POTONGAN (−) [TIDAK MASUK TOTAL] = ${PayrollCalculator.formatRupiah(summary.totalDeductions)}")
+        }
+        append("TOTAL PERHITUNGAN (TANPA POTONGAN) = ${PayrollCalculator.formatRupiah(summary.grandTotal)}")
     }
 
     fun formatAllSavedSummaryText(calculations: List<ComputedCalculationSummary>): String = buildString {
+        val totals = summarizeSavedCalculations(calculations)
         appendLine("=== TOTAL GAJIAN TERSIMPAN ===")
         calculations.forEachIndexed { idx, calc ->
             appendLine("${idx + 1}. ${IndonesianDateFormatter.formatFullDate(calc.scheduledDateTimeMillis)} (${IndonesianDateFormatter.formatTime(calc.scheduledDateTimeMillis)})")
             appendLine("   ${calc.members.size} karyawan • Total = ${PayrollCalculator.formatRupiah(calc.grandTotal)}")
         }
         appendLine("==============================")
-        append("TOTAL KESELURUHAN = ${PayrollCalculator.formatRupiah(sumSavedCalculations(calculations))}")
+        appendLine("SEBELUM DIPOTONG & DITAMBAH = ${PayrollCalculator.formatRupiah(totals.totalBeforeAdjustments)}")
+        if (totals.totalAdditions.signum() != 0) {
+            appendLine("TOTAL PENAMBAHAN (+) = ${PayrollCalculator.formatRupiah(totals.totalAdditions)}")
+        }
+        if (totals.totalDeductions.signum() != 0) {
+            appendLine("INFO POTONGAN (−) [TIDAK MASUK TOTAL] = ${PayrollCalculator.formatRupiah(totals.totalDeductions)}")
+        }
+        append("TOTAL KESELURUHAN = ${PayrollCalculator.formatRupiah(totals.grandTotal)}")
     }
 
     fun formatMonthlySummaryText(
         month: PayrollMonth,
         monthlyCalculations: List<ComputedCalculationSummary>
     ): String = buildString {
+        val totals = summarizeSavedCalculations(monthlyCalculations)
         appendLine("=== TOTAL GAJI ${month.labelFull().uppercase()} ===")
         appendLine("Periode: ${month.periodRangeLabel()}")
         appendLine("------------------------------")
         monthlyCalculations.forEachIndexed { idx, calc ->
             appendLine("${idx + 1}. ${IndonesianDateFormatter.formatFullDate(calc.scheduledDateTimeMillis)} (${IndonesianDateFormatter.formatTime(calc.scheduledDateTimeMillis)})")
-            appendLine("   ${calc.members.size} karyawan • Total = ${PayrollCalculator.formatRupiah(calc.grandTotal)}")
+            appendLine("   ${calc.members.size} karyawan • Sebelum Penyesuaian = ${PayrollCalculator.formatRupiah(calc.totalBeforeAdjustments)} • Total = ${PayrollCalculator.formatRupiah(calc.grandTotal)}")
         }
         appendLine("==============================")
-        append("TOTAL BULAN ${month.labelFull().uppercase()} = ${PayrollCalculator.formatRupiah(sumSavedCalculations(monthlyCalculations))}")
+        appendLine("SEBELUM DIPOTONG & DITAMBAH = ${PayrollCalculator.formatRupiah(totals.totalBeforeAdjustments)}")
+        if (totals.totalAdditions.signum() != 0) {
+            appendLine("TOTAL PENAMBAHAN (+) = ${PayrollCalculator.formatRupiah(totals.totalAdditions)}")
+        }
+        if (totals.totalDeductions.signum() != 0) {
+            appendLine("INFO POTONGAN (−) [TIDAK MASUK TOTAL] = ${PayrollCalculator.formatRupiah(totals.totalDeductions)}")
+        }
+        append("TOTAL BULAN ${month.labelFull().uppercase()} = ${PayrollCalculator.formatRupiah(totals.grandTotal)}")
     }
 }

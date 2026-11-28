@@ -161,19 +161,28 @@ object PayrollCalculator {
 
     /**
      * Applies user-configured custom floor rounding downward.
-     * When mode == NONE, returns exact raw value without any rounding.
-     * When mode == FLOOR_TO_STEP, floors downward to the nearest multiple of `step`:
-     *   floor(raw / step) * step
+     * - When mode == NONE, returns exact raw value without any rounding.
+     * - When default floor-100 rule is active: if the exact value ends in 50 (i.e. |raw| % 100 == 50,
+     *   such as 70.550 or 450), keep it as-is without rounding down; all other values follow
+     *   FLOOR(raw / 100) * 100.
+     * - For other custom FLOOR_TO_STEP values: floor(raw / step) * step.
      */
     fun applyCustomRounding(raw: BigDecimal, config: RoundingConfig): BigDecimal {
+        val normalized = raw.stripTrailingZerosNormalized()
         if (config.mode == RoundingModeType.NONE) {
-            return raw.stripTrailingZerosNormalized()
+            return normalized
         }
         val step = config.stepBigDecimal()
         if (step.compareTo(BigDecimal.ZERO) <= 0) {
-            return raw.stripTrailingZerosNormalized()
+            return normalized
         }
-        val units = raw.divide(step, 0, RoundingMode.FLOOR)
+        if (config.isDefaultFloor100()) {
+            val remainderMod100 = normalized.remainder(BigDecimal("100")).abs()
+            if (remainderMod100.compareTo(BigDecimal("50")) == 0) {
+                return normalized
+            }
+        }
+        val units = normalized.divide(step, 0, RoundingMode.FLOOR)
         return units.multiply(step).stripTrailingZerosNormalized()
     }
 

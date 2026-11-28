@@ -179,7 +179,7 @@ private fun HitungGajianApp(viewModel: PayrollViewModel) {
     val availableTotalMonths by viewModel.availableTotalMonths.collectAsStateWithLifecycle()
     val monthCalculationCounts by viewModel.monthCalculationCounts.collectAsStateWithLifecycle()
     val monthlySavedCalculations by viewModel.monthlySavedCalculations.collectAsStateWithLifecycle()
-    val monthlyTotalPayroll by viewModel.monthlyTotalPayroll.collectAsStateWithLifecycle()
+    val monthlyTotalSummary by viewModel.monthlyTotalSummary.collectAsStateWithLifecycle()
     val currentMonthCalculations by viewModel.currentMonthCalculations.collectAsStateWithLifecycle()
     val currentMonthTotalPayroll by viewModel.currentMonthTotalPayroll.collectAsStateWithLifecycle()
     val autoSaveStatus by viewModel.autoSaveStatus.collectAsStateWithLifecycle()
@@ -432,8 +432,11 @@ private fun HitungGajianApp(viewModel: PayrollViewModel) {
                                 }
                             },
                             onAddRow = { viewModel.addRowToMember(route.memberId) },
-                            onUpdateRow = { rowId, n1, n2 ->
-                                viewModel.updateMemberRow(route.memberId, rowId, n1, n2)
+                            onUpdateRow = { rowId, n1, n2, note ->
+                                viewModel.updateMemberRow(route.memberId, rowId, n1, n2, note)
+                            },
+                            onToggleRowFormula = { rowId ->
+                                viewModel.toggleMemberRowFormula(route.memberId, rowId)
                             },
                             onRemoveRow = { rowId ->
                                 viewModel.removeRowFromMember(route.memberId, rowId)
@@ -443,9 +446,15 @@ private fun HitungGajianApp(viewModel: PayrollViewModel) {
                             onApplyFormulaGlobal = { viewModel.applyFormulaGlobal(it, attachActiveDraftToGlobal = true) },
                             onUseGlobalFormula = viewModel::revertDraftToGlobalFormula,
                             onUpdateRounding = viewModel::updateRoundingConfig,
-                            onAddAdjustmentColumn = viewModel::addAdjustmentColumn,
-                            onUpdateAdjustmentColumn = viewModel::updateAdjustmentColumn,
-                            onDeleteAdjustmentColumn = viewModel::deleteAdjustmentColumn,
+                            onAddAdjustmentColumn = { name, op ->
+                                viewModel.addAdjustmentColumnForMember(route.memberId, name, op)
+                            },
+                            onUpdateAdjustmentColumn = { colId, name, op ->
+                                viewModel.updateAdjustmentColumnForMember(route.memberId, colId, name, op)
+                            },
+                            onDeleteAdjustmentColumn = { colId ->
+                                viewModel.deleteAdjustmentColumnForMember(route.memberId, colId)
+                            },
                             onUpdateAdjustmentValue = { colId, value ->
                                 viewModel.updateMemberAdjustmentValue(route.memberId, colId, value)
                             },
@@ -472,10 +481,6 @@ private fun HitungGajianApp(viewModel: PayrollViewModel) {
                             onApplyFormulaGlobal = { viewModel.applyFormulaGlobal(it, attachActiveDraftToGlobal = true) },
                             onUseGlobalFormula = viewModel::revertDraftToGlobalFormula,
                             onUpdateRounding = viewModel::updateRoundingConfig,
-                            onAddColumn = viewModel::addAdjustmentColumn,
-                            onUpdateColumn = viewModel::updateAdjustmentColumn,
-                            onDeleteColumn = viewModel::deleteAdjustmentColumn,
-                            onUpdateAdjustmentValue = viewModel::updateMemberAdjustmentValue,
                             onSaveTotal = saveCalculationAndGoHistory,
                             onOpenScan = { navController.navigate(ScanRoute) },
                             onCopiedFeedback = { msg ->
@@ -505,10 +510,11 @@ private fun HitungGajianApp(viewModel: PayrollViewModel) {
                             availableMonths = availableTotalMonths,
                             monthCalculationCounts = monthCalculationCounts,
                             monthlyCalculations = monthlySavedCalculations,
-                            monthlyTotalPayroll = monthlyTotalPayroll,
+                            monthlyTotalSummary = monthlyTotalSummary,
                             onSelectMonth = viewModel::selectTotalMonth,
                             onStepMonth = viewModel::stepTotalMonth,
                             onOpenSavedCalculation = openSavedCalculationFlow,
+                            onDeleteCalculation = viewModel::deleteSavedCalculation,
                             onCreateCalculation = startCreateCalculationFlow,
                             onCopiedFeedback = { msg ->
                                 coroutineScope.launch { snackbarHostState.showSnackbar(msg) }

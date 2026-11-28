@@ -53,14 +53,16 @@ data class AdjustmentColumn(
 }
 
 /**
- * Single calculation row for an employee: N1 × N2 [op operand] = N.
- * Default trailing operation is ÷ 12 (configurable to ÷, ×, +, −, or toggled OFF).
+ * Single calculation row for an employee: Jumlah × Harga [op operand] = N.
+ * Default trailing operation is ÷ 12 (configurable to ÷, ×, +, −, or toggled OFF per row).
  */
 @Serializable
 data class CalculationRowItem(
     val id: String = UUID.randomUUID().toString(),
     val n1Text: String = "",
-    val n2Text: String = ""
+    val n2Text: String = "",
+    val formulaEnabledOverride: Boolean? = null,
+    val note: String = ""
 )
 
 @Serializable
@@ -69,6 +71,7 @@ data class CalculationMemberEntry(
     val name: String,
     val isCustomOneOff: Boolean = false,
     val rows: List<CalculationRowItem> = listOf(CalculationRowItem()),
+    val adjustmentColumns: List<AdjustmentColumn> = emptyList(),
     val adjustmentValues: Map<String, String> = emptyMap()
 )
 
@@ -88,12 +91,16 @@ data class ComputedRowResult(
 
 data class ComputedMemberResult(
     val member: CalculationMemberEntry,
+    val effectiveColumns: List<AdjustmentColumn>,
     val computedRows: List<ComputedRowResult>,
     val validRowCount: Int,
     val subtotalRaw: BigDecimal,
     val subtotalAfterFormula: BigDecimal,
     val adjustmentAmounts: Map<String, BigDecimal?>,
+    val totalAdditions: BigDecimal,
+    val totalDeductions: BigDecimal,
     val netAdjustment: BigDecimal,
+    val totalExcludingDeductions: BigDecimal,
     val finalTotal: BigDecimal
 )
 
@@ -106,8 +113,18 @@ data class ComputedCalculationSummary(
     val members: List<ComputedMemberResult>,
     val totalRawBeforeRounding: BigDecimal = BigDecimal.ZERO,
     val totalBeforeAdjustments: BigDecimal,
+    val totalAdditions: BigDecimal = BigDecimal.ZERO,
+    val totalDeductions: BigDecimal = BigDecimal.ZERO,
     val totalAdjustments: BigDecimal,
     val grandTotal: BigDecimal
+)
+
+data class MonthlyTotalSummary(
+    val totalRawBeforeRounding: BigDecimal = BigDecimal.ZERO,
+    val totalBeforeAdjustments: BigDecimal = BigDecimal.ZERO,
+    val totalAdditions: BigDecimal = BigDecimal.ZERO,
+    val totalDeductions: BigDecimal = BigDecimal.ZERO,
+    val grandTotal: BigDecimal = BigDecimal.ZERO
 )
 
 object IndonesianDateFormatter {

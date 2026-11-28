@@ -489,7 +489,7 @@ fun AdjustmentColumnDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "Kolom akan tersedia untuk seluruh karyawan di tabel ini. Sel kosong akan dilewati otomatis.",
+                    text = "Kolom ini hanya berlaku untuk karyawan ini pada perhitungan tanggal ini dan tidak memengaruhi karyawan atau tanggal lain.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -608,7 +608,7 @@ fun RoundingRuleSelectorCard(
             )
             if (currentConfig.isDefaultFloor100()) {
                 Text(
-                    text = "Rumus Default: FLOOR(N ÷ 100) × 100 • Hasil asli tetap ditampilkan",
+                    text = "Rumus Default: FLOOR(N ÷ 100) × 100 (akhiran pas 50 seperti 70.550 tetap) • Hasil asli tetap ditampilkan",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

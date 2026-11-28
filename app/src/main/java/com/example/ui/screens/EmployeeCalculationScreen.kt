@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,8 +32,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -106,7 +109,8 @@ fun EmployeeCalculationScreen(
     onSaveFallback: () -> Unit,
     onSwitchMember: (String) -> Unit,
     onAddRow: () -> Unit,
-    onUpdateRow: (rowId: String, n1: String?, n2: String?) -> Unit,
+    onUpdateRow: (rowId: String, n1: String?, n2: String?, note: String?) -> Unit,
+    onToggleRowFormula: (rowId: String) -> Unit,
     onRemoveRow: (rowId: String) -> Unit,
     onToggleFormula: () -> Unit,
     onApplyFormulaPerList: (FormulaConfig) -> Unit,
@@ -263,7 +267,7 @@ fun EmployeeCalculationScreen(
                     }
                 }
 
-                // 3. Jumlah × Harga [op operand] = N Rows (v1 style with v2 configurable formula)
+                // 3. Jumlah × Harga [op operand] = N Rows (per-row formula toggle + triggered notes)
                 itemsIndexed(
                     items = memberResult.computedRows,
                     key = { _, item -> item.row.id }
@@ -271,12 +275,12 @@ fun EmployeeCalculationScreen(
                     EmployeeFormulaRowCard(
                         index = idx,
                         result = rowResult,
-                        formula = effectiveFormula,
                         roundingConfig = roundingConfig,
                         canDelete = memberResult.computedRows.size > 1,
-                        onJumlahChange = { onUpdateRow(rowResult.row.id, it, null) },
-                        onHargaChange = { onUpdateRow(rowResult.row.id, null, it) },
-                        onToggleFormula = onToggleFormula,
+                        onJumlahChange = { onUpdateRow(rowResult.row.id, it, null, null) },
+                        onHargaChange = { onUpdateRow(rowResult.row.id, null, it, null) },
+                        onNoteChange = { onUpdateRow(rowResult.row.id, null, null, it) },
+                        onToggleRowFormula = { onToggleRowFormula(rowResult.row.id) },
                         onRemove = { onRemoveRow(rowResult.row.id) }
                     )
                 }
@@ -298,17 +302,18 @@ fun EmployeeCalculationScreen(
                     }
                 }
 
-                // 5. Potongan & Penambahan Section directly below (v1 style + unlimited dynamic columns)
+                // 5. Per-Employee Isolated Potongan & Penambahan Section (does not affect other employees or dates)
                 item {
-                    val hasPtCol = computed.columns.any { it.name.equals("Potongan PT", ignoreCase = true) }
-                    val hasBonusCol = computed.columns.any { it.name.equals("Bonus", ignoreCase = true) }
-                    val hasKasbonCol = computed.columns.any { it.name.equals("Kasbon", ignoreCase = true) }
+                    val memberColumns = memberResult.effectiveColumns
+                    val hasPtCol = memberColumns.any { it.name.equals("Potongan PT", ignoreCase = true) }
+                    val hasBonusCol = memberColumns.any { it.name.equals("Bonus", ignoreCase = true) }
+                    val hasKasbonCol = memberColumns.any { it.name.equals("Kasbon", ignoreCase = true) }
 
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         border = BorderStroke(
                             1.dp,
-                            if (computed.columns.isNotEmpty()) PtDeductionBorder else MaterialTheme.colorScheme.outlineVariant
+                            if (memberColumns.isNotEmpty()) PtDeductionBorder else MaterialTheme.colorScheme.outlineVariant
                         )
                     ) {
                         Column(
@@ -328,14 +333,14 @@ fun EmployeeCalculationScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "Dihitung terpisah setelah hasil Jumlah × Harga. Sel kosong dilewati; ketik 0 jika ingin menampilkan 0.",
+                                        text = "Khusus untuk ${memberResult.member.name} pada tanggal ini saja (tidak memengaruhi karyawan atau tanggal lain).",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
 
-                            // Quick 1-tap preset chips for common deductions/additions
+                            // Quick 1-tap preset chips for common deductions/additions (per employee only)
                             if (!hasPtCol || !hasBonusCol || !hasKasbonCol) {
                                 Row(
                                     modifier = Modifier
@@ -367,10 +372,10 @@ fun EmployeeCalculationScreen(
                                 }
                             }
 
-                            // Dynamic Adjustment Input Fields for this employee
-                            if (computed.columns.isNotEmpty()) {
+                            // Dynamic Adjustment Input Fields exclusively for this employee
+                            if (memberColumns.isNotEmpty()) {
                                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    computed.columns.forEach { col ->
+                                    memberColumns.forEach { col ->
                                         val isDeduction = col.operation == AdjustmentOperation.SUBTRACT
                                         val rawValue = memberResult.member.adjustmentValues[col.id].orEmpty()
 
@@ -425,7 +430,7 @@ fun EmployeeCalculationScreen(
                                 }
                             }
 
-                            // Button to add more custom Potongan / Penambahan columns
+                            // Button to add more custom Potongan / Penambahan columns for this employee only
                             OutlinedButton(
                                 onClick = { showAddColumnDialog = true },
                                 shape = RoundedCornerShape(12.dp),
@@ -453,7 +458,7 @@ fun EmployeeCalculationScreen(
 
                 // 7. Live Summary Card for this Employee (pure sum of each column's rounded results — never re-rounded)
                 item {
-                    val filledAdjustments = computed.columns.mapNotNull { col ->
+                    val filledAdjustments = memberResult.effectiveColumns.mapNotNull { col ->
                         val amount = memberResult.adjustmentAmounts[col.id]
                         if (amount != null) col to amount else null
                     }
@@ -521,7 +526,7 @@ fun EmployeeCalculationScreen(
                                 ) {
                                     Text(
                                         text = if (filledAdjustments.isNotEmpty()) {
-                                            "TOTAL PENJUMLAHAN (Sebelum Penyesuaian)"
+                                            "TOTAL PENJUMLAHAN (Sebelum Dipotong & Ditambah)"
                                         } else {
                                             "TOTAL PENJUMLAHAN"
                                         },
@@ -577,7 +582,7 @@ fun EmployeeCalculationScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "TOTAL AKHIR",
+                                            text = "TOTAL AKHIR KARYAWAN",
                                             style = MaterialTheme.typography.titleMedium,
                                             color = EmeraldVerified,
                                             fontWeight = FontWeight.Bold
@@ -589,6 +594,14 @@ fun EmployeeCalculationScreen(
                                             modifier = Modifier.testTag("emp_calc_final_total_text")
                                         )
                                     }
+                                }
+
+                                if (memberResult.totalDeductions.signum() > 0) {
+                                    Text(
+                                        text = "Catatan: Potongan hanya mengurangi total karyawan ini dan tidak dimasukkan ke perhitungan Total keseluruhan.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = PtDeductionAccent
+                                    )
                                 }
                             }
                         }
@@ -719,17 +732,20 @@ fun EmployeeCalculationScreen(
 private fun EmployeeFormulaRowCard(
     index: Int,
     result: ComputedRowResult,
-    formula: FormulaConfig,
     roundingConfig: RoundingConfig,
     canDelete: Boolean,
     onJumlahChange: (String) -> Unit,
     onHargaChange: (String) -> Unit,
-    onToggleFormula: () -> Unit,
+    onNoteChange: (String) -> Unit,
+    onToggleRowFormula: () -> Unit,
     onRemove: () -> Unit
 ) {
     val disabledGrey = Color(0xFF94A3B8)
-    val isActive = formula.enabled
+    val rowFormula = result.formulaApplied
+    val isActive = rowFormula.enabled
     val isRoundingActive = roundingConfig.mode != RoundingModeType.NONE
+    var isNoteTriggered by remember(result.row.id) { mutableStateOf(result.row.note.isNotBlank()) }
+    val showNoteField = isNoteTriggered || result.row.note.isNotBlank()
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -749,18 +765,41 @@ private fun EmployeeFormulaRowCard(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary
                 )
-                if (canDelete) {
-                    IconButton(
-                        onClick = onRemove,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("emp_calc_remove_row_$index")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Hapus baris ${index + 1}",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    if (!showNoteField) {
+                        TextButton(
+                            onClick = { isNoteTriggered = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.testTag("emp_calc_add_note_trigger_$index")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.NoteAdd,
+                                contentDescription = "Tambah catatan baris ${index + 1}",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Catatan",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                    if (canDelete) {
+                        IconButton(
+                            onClick = onRemove,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("emp_calc_remove_row_$index")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Hapus baris ${index + 1}",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -800,7 +839,7 @@ private fun EmployeeFormulaRowCard(
                         .testTag("emp_calc_n2_$index")
                 )
 
-                // Interactive trailing formula pill (e.g. ÷ 12 — turns grey when toggled OFF!)
+                // Per-row interactive trailing formula pill (e.g. ÷ 12 — toggling OFF affects ONLY this row!)
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = if (isActive) MaterialTheme.colorScheme.primaryContainer
@@ -811,26 +850,68 @@ private fun EmployeeFormulaRowCard(
                     ),
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
-                        .clickable(onClick = onToggleFormula)
+                        .clickable(onClick = onToggleRowFormula)
                         .testTag("emp_calc_row_formula_pill_$index")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(1.dp)
                     ) {
-                        Text(
-                            text = formula.operation.symbol,
-                            style = NumericFormulaStyle.copy(fontWeight = FontWeight.Bold),
-                            color = if (isActive) MaterialTheme.colorScheme.primary else disabledGrey
-                        )
-                        Text(
-                            text = formula.formattedOperand(),
-                            style = NumericFormulaStyle.copy(fontWeight = FontWeight.Bold),
-                            color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else disabledGrey
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = rowFormula.operation.symbol,
+                                style = NumericFormulaStyle.copy(fontWeight = FontWeight.Bold),
+                                color = if (isActive) MaterialTheme.colorScheme.primary else disabledGrey
+                            )
+                            Text(
+                                text = rowFormula.formattedOperand(),
+                                style = NumericFormulaStyle.copy(fontWeight = FontWeight.Bold),
+                                color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else disabledGrey
+                            )
+                        }
+                        if (!isActive) {
+                            Text(
+                                text = "MATI",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = disabledGrey,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
+            }
+
+            // Triggered collapsible Notes input (zero extra space when not triggered)
+            AnimatedVisibility(visible = showNoteField) {
+                OutlinedTextField(
+                    value = result.row.note,
+                    onValueChange = onNoteChange,
+                    label = { Text("Catatan Kolom #${index + 1}") },
+                    placeholder = { Text("Contoh: Lembur, model A, revisi…") },
+                    singleLine = true,
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                onNoteChange("")
+                                isNoteTriggered = false
+                            },
+                            modifier = Modifier.testTag("emp_calc_clear_note_$index")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Tutup catatan baris ${index + 1}",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("emp_calc_note_input_$index")
+                )
             }
 
             if (result.isValid) {
@@ -879,9 +960,10 @@ private fun EmployeeFormulaRowCard(
                         ) {
                             Text(
                                 text = when {
-                                    isRoundingActive -> "Hasil Pembulatan (${roundingConfig.shortBadge()})"
-                                    isActive -> "Hasil (${formula.shortLabel()})"
-                                    else -> "Hasil (Rumus Nonaktif)"
+                                    isRoundingActive && isActive -> "Hasil Pembulatan (${roundingConfig.shortBadge()})"
+                                    isRoundingActive && !isActive -> "Hasil (${rowFormula.shortLabel()} Mati • ${roundingConfig.shortBadge()})"
+                                    isActive -> "Hasil (${rowFormula.shortLabel()})"
+                                    else -> "Hasil (${rowFormula.shortLabel()} Mati)"
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,

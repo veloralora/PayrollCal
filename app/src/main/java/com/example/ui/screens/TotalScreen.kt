@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -48,6 +48,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -59,23 +63,25 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.domain.ComputedCalculationSummary
 import com.example.domain.IndonesianDateFormatter
+import com.example.domain.MonthlyTotalSummary
 import com.example.domain.PayrollCalculator
 import com.example.domain.PayrollEngine
 import com.example.domain.PayrollMonth
+import com.example.ui.components.ConfirmDeleteDialog
 import com.example.ui.theme.CobaltPrimary
 import com.example.ui.theme.CobaltPrimaryDark
 import com.example.ui.theme.NumericDisplayStyle
+import com.example.ui.theme.NumericFormulaStyle
 import com.example.ui.theme.NumericHeadlineStyle
-import java.math.BigDecimal
+import com.example.ui.theme.NumericSmallStyle
+import com.example.ui.theme.PtDeductionAccent
 
 /**
  * Tab Total Gaji (Monthly Scope — 1st to Last Day of Selected Month, Max 12 Months):
- * - Displays total payroll strictly for the selected 1-month period (regardless of how many
- *   calculations exist within that month).
- * - Month selector lets user switch across up to 12 stored months to inspect totals and
- *   individual calculations for any previous month.
- * - Tapping any calculation opens it directly so user can still edit it anytime.
- * - Automatic 12-month rolling retention deletes the oldest month when advancing to month 13.
+ * - Displays Total Sebelum Dipotong & Ditambah, Penambahan (+), Info Potongan (−), and Total Gaji
+ *   (where deductions are NEVER subtracted from total calculation).
+ * - Supports deleting individual calculation records directly from Tab Total (with confirmation).
+ * - Month selector lets user switch across up to 12 stored months to inspect & edit past calculations.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,15 +90,18 @@ fun TotalScreen(
     availableMonths: List<PayrollMonth>,
     monthCalculationCounts: Map<PayrollMonth, Int>,
     monthlyCalculations: List<ComputedCalculationSummary>,
-    monthlyTotalPayroll: BigDecimal,
+    monthlyTotalSummary: MonthlyTotalSummary,
     onSelectMonth: (PayrollMonth) -> Unit,
     onStepMonth: (Int) -> Unit,
     onOpenSavedCalculation: (Long) -> Unit,
+    onDeleteCalculation: (ComputedCalculationSummary) -> Unit,
     onCreateCalculation: () -> Unit,
     onCopiedFeedback: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var deletingCalc by remember { mutableStateOf<ComputedCalculationSummary?>(null) }
+
     val oldestAllowed = availableMonths.lastOrNull() ?: selectedMonth
     val newestAllowed = availableMonths.firstOrNull() ?: selectedMonth
     val canGoPrev = selectedMonth > oldestAllowed
@@ -254,7 +263,7 @@ fun TotalScreen(
                     }
                 }
 
-                // 2. Monthly Grand Total Card (1st to End of Selected Month)
+                // 2. Monthly Grand Total Card (shows Total Sebelum Dipotong & Ditambah + Total tanpa Potongan)
                 item {
                     Card(
                         shape = RoundedCornerShape(20.dp),
@@ -273,24 +282,100 @@ fun TotalScreen(
                                 )
                                 .padding(20.dp)
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = "TOTAL GAJI • ${selectedMonth.labelFull().uppercase()}",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = Color.White.copy(alpha = 0.88f)
+                                    )
+                                    Text(
+                                        text = "Periode ${selectedMonth.periodRangeLabel()}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.80f)
+                                    )
+                                }
+
                                 Text(
-                                    text = "TOTAL GAJI • ${selectedMonth.labelFull().uppercase()}",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = Color.White.copy(alpha = 0.88f)
-                                )
-                                Text(
-                                    text = "Periode ${selectedMonth.periodRangeLabel()}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.White.copy(alpha = 0.80f)
-                                )
-                                Text(
-                                    text = PayrollCalculator.formatRupiah(monthlyTotalPayroll),
+                                    text = PayrollCalculator.formatRupiah(monthlyTotalSummary.grandTotal),
                                     style = NumericDisplayStyle,
                                     color = Color.White,
                                     modifier = Modifier.testTag("total_saved_grand_text")
                                 )
-                                HorizontalDivider(color = Color.White.copy(alpha = 0.22f))
+
+                                // Clear breakdown: Sebelum Dipotong & Ditambah, Penambahan (+), Info Potongan (−)
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color.White.copy(alpha = 0.14f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "Sebelum Dipotong & Ditambah",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color.White.copy(alpha = 0.90f),
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Text(
+                                                text = PayrollCalculator.formatRupiah(monthlyTotalSummary.totalBeforeAdjustments),
+                                                style = NumericFormulaStyle.copy(fontWeight = FontWeight.Bold),
+                                                color = Color.White,
+                                                modifier = Modifier.testTag("total_before_adjustments_text")
+                                            )
+                                        }
+
+                                        if (monthlyTotalSummary.totalAdditions.signum() > 0) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Total Penambahan (+)",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = Color.White.copy(alpha = 0.88f),
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Text(
+                                                    text = "+ ${PayrollCalculator.formatRupiah(monthlyTotalSummary.totalAdditions)}",
+                                                    style = NumericFormulaStyle.copy(fontWeight = FontWeight.SemiBold),
+                                                    color = Color(0xFFA7F3D0),
+                                                    modifier = Modifier.testTag("total_additions_text")
+                                                )
+                                            }
+                                        }
+
+                                        if (monthlyTotalSummary.totalDeductions.signum() > 0) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Info Potongan (−) • Tidak masuk total",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = Color.White.copy(alpha = 0.82f),
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Text(
+                                                    text = PayrollCalculator.formatRupiah(monthlyTotalSummary.totalDeductions),
+                                                    style = NumericFormulaStyle.copy(fontWeight = FontWeight.SemiBold),
+                                                    color = Color(0xFFFDE68A),
+                                                    modifier = Modifier.testTag("total_deductions_info_text")
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -302,7 +387,7 @@ fun TotalScreen(
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Text(
-                                        text = "${monthlyCalculations.size} perhitungan tersimpan pada bulan ini • Pembaruan otomatis",
+                                        text = "${monthlyCalculations.size} perhitungan • Potongan tidak dimasukkan ke perhitungan total",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.White.copy(alpha = 0.88f)
                                     )
@@ -312,7 +397,7 @@ fun TotalScreen(
                     }
                 }
 
-                // 3. Monthly Calculation Breakdown List
+                // 3. Monthly Calculation Breakdown List (with per-item Delete + Edit)
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -324,7 +409,7 @@ fun TotalScreen(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "Ketuk untuk ubah",
+                            text = "Ketuk ubah • Hapus per data",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -378,6 +463,7 @@ fun TotalScreen(
                         items = monthlyCalculations,
                         key = { it.calculationId }
                     ) { calc ->
+                        val dateLabel = IndonesianDateFormatter.formatFullDate(calc.scheduledDateTimeMillis)
                         Card(
                             onClick = { onOpenSavedCalculation(calc.calculationId) },
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -386,60 +472,108 @@ fun TotalScreen(
                                 .fillMaxWidth()
                                 .testTag("total_calc_row_${calc.calculationId}")
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.Top
                                 ) {
-                                    Text(
-                                        text = IndonesianDateFormatter.formatFullDate(calc.scheduledDateTimeMillis),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Jam ${IndonesianDateFormatter.formatTime(calc.scheduledDateTimeMillis)} • ${calc.members.size} karyawan",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        val statusText = if (calc.effectiveFormula.enabled) {
-                                            calc.effectiveFormula.shortLabel()
-                                        } else {
-                                            "${calc.effectiveFormula.shortLabel()} (Mati)"
-                                        }
-                                        val scope = if (calc.usesGlobalFormula) "Global" else "Per Daftar"
                                         Text(
-                                            text = "$scope: $statusText",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            text = dateLabel,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Jam ${IndonesianDateFormatter.formatTime(calc.scheduledDateTimeMillis)} • ${calc.members.size} karyawan",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant
+                                        ) {
+                                            val statusText = if (calc.effectiveFormula.enabled) {
+                                                calc.effectiveFormula.shortLabel()
+                                            } else {
+                                                "${calc.effectiveFormula.shortLabel()} (Mati)"
+                                            }
+                                            val scope = if (calc.usesGlobalFormula) "Global" else "Per Daftar"
+                                            Text(
+                                                text = "$scope: $statusText",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+
+                                    IconButton(
+                                        onClick = { deletingCalc = calc },
+                                        modifier = Modifier.testTag("total_delete_${calc.calculationId}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Delete,
+                                            contentDescription = "Hapus perhitungan $dateLabel",
+                                            tint = MaterialTheme.colorScheme.error
                                         )
                                     }
                                 }
+
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = PayrollCalculator.formatRupiah(calc.grandTotal),
-                                        style = NumericHeadlineStyle,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                        contentDescription = "Buka & ubah perhitungan",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = "Sebelum penyesuaian: ${PayrollCalculator.formatRupiah(calc.totalBeforeAdjustments)}",
+                                            style = NumericSmallStyle,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        if (calc.totalAdditions.signum() > 0) {
+                                            Text(
+                                                text = "Penambahan: +${PayrollCalculator.formatRupiah(calc.totalAdditions)}",
+                                                style = NumericSmallStyle,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        if (calc.totalDeductions.signum() > 0) {
+                                            Text(
+                                                text = "Potongan (info): ${PayrollCalculator.formatRupiah(calc.totalDeductions)}",
+                                                style = NumericSmallStyle,
+                                                color = PtDeductionAccent
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = PayrollCalculator.formatRupiah(calc.grandTotal),
+                                            style = NumericHeadlineStyle,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = "Buka & ubah perhitungan",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -475,5 +609,18 @@ fun TotalScreen(
                 }
             }
         }
+    }
+
+    deletingCalc?.let { target ->
+        val label = IndonesianDateFormatter.formatFullDate(target.scheduledDateTimeMillis)
+        ConfirmDeleteDialog(
+            title = "Hapus Data Perhitungan?",
+            message = "Perhitungan \"$label\" akan dihapus permanen dari Tab Total dan Riwayat. Lanjutkan?",
+            onDismiss = { deletingCalc = null },
+            onConfirm = {
+                onDeleteCalculation(target)
+                deletingCalc = null
+            }
+        )
     }
 }

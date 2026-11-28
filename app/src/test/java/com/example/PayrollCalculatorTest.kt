@@ -101,13 +101,13 @@ class PayrollCalculatorTest {
         )
 
         val defaultDivide12 = FormulaConfig(enabled = true, operation = FormulaOperation.DIVIDE, operand = "12")
-        // With Default FLOOR(N/100)*100: 450 -> 400, 600 -> 600, Total = 1.000, Raw = 1.050
+        // With Default FLOOR(N/100)*100 (exact 50 preserved): 450 stays 450, 600 stays 600, Total = 1.050
         val computedDefaultRounding = PayrollEngine.computeMember(member, defaultDivide12, emptyList())
         assertEquals(0, BigDecimal("450").compareTo(computedDefaultRounding.computedRows[0].afterFormulaRaw))
-        assertEquals(0, BigDecimal("400").compareTo(computedDefaultRounding.computedRows[0].afterFormula))
+        assertEquals(0, BigDecimal("450").compareTo(computedDefaultRounding.computedRows[0].afterFormula))
         assertEquals(0, BigDecimal("600").compareTo(computedDefaultRounding.computedRows[1].afterFormula))
         assertEquals(0, BigDecimal("1050").compareTo(computedDefaultRounding.subtotalRaw))
-        assertEquals(0, BigDecimal("1000").compareTo(computedDefaultRounding.subtotalAfterFormula))
+        assertEquals(0, BigDecimal("1050").compareTo(computedDefaultRounding.subtotalAfterFormula))
 
         // With Asli (NONE): 450 + 600 = 1.050
         val computedAsli = PayrollEngine.computeMember(member, defaultDivide12, emptyList(), RoundingConfig.ASLI)
@@ -127,6 +127,104 @@ class PayrollCalculatorTest {
         val computedPlus = PayrollEngine.computeMember(member, plus50, emptyList(), RoundingConfig.ASLI)
         assertEquals(0, BigDecimal("5450").compareTo(computedPlus.computedRows[0].afterFormula))
         assertEquals(0, BigDecimal("12700").compareTo(computedPlus.subtotalAfterFormula))
+    }
+
+    @Test
+    fun exactEnding50PreservedUnderDefaultRounding() {
+        val defaultConfig = RoundingConfig.DEFAULT
+        // Exact 50 ending stays untouched (user example: 70.550 -> 70.550)
+        assertEquals(0, BigDecimal("70550").compareTo(PayrollCalculator.applyCustomRounding(BigDecimal("70550"), defaultConfig)))
+        assertEquals(0, BigDecimal("70550").compareTo(PayrollCalculator.applyCustomRounding(BigDecimal("70550.00"), defaultConfig)))
+        assertEquals(0, BigDecimal("450").compareTo(PayrollCalculator.applyCustomRounding(BigDecimal("450"), defaultConfig)))
+        // Non-50 endings still follow default FLOOR(N / 100) * 100
+        assertEquals(0, BigDecimal("70500").compareTo(PayrollCalculator.applyCustomRounding(BigDecimal("70549"), defaultConfig)))
+        assertEquals(0, BigDecimal("70500").compareTo(PayrollCalculator.applyCustomRounding(BigDecimal("70551"), defaultConfig)))
+        assertEquals(0, BigDecimal("70500").compareTo(PayrollCalculator.applyCustomRounding(BigDecimal("70550.3333"), defaultConfig)))
+        assertEquals(0, BigDecimal("70500").compareTo(PayrollCalculator.applyCustomRounding(BigDecimal("70583.3333"), defaultConfig)))
+    }
+
+    @Test
+    fun perRowFormulaDisableAffectsOnlyThatSingleRowAndNoteIsPreserved() {
+        // Row 1 turns OFF ÷ 12 -> 100 * 54 = 5.400 (with note)
+        // Row 2 keeps ÷ 12 ON -> 200 * 36 / 12 = 600
+        val member = CalculationMemberEntry(
+            id = "m_row_iso",
+            name = "Siti",
+            rows = listOf(
+                CalculationRowItem(
+                    id = "r1",
+                    n1Text = "100",
+                    n2Text = "54",
+                    formulaEnabledOverride = false,
+                    note = "Borongan khusus"
+                ),
+                CalculationRowItem(
+                    id = "r2",
+                    n1Text = "200",
+                    n2Text = "36"
+                )
+            )
+        )
+        val computed = PayrollEngine.computeMember(member, FormulaConfig(), emptyList(), RoundingConfig.DEFAULT)
+        assertFalse(computed.computedRows[0].formulaApplied.enabled)
+        assertTrue(computed.computedRows[1].formulaApplied.enabled)
+        assertEquals(0, BigDecimal("5400").compareTo(computed.computedRows[0].afterFormula))
+        assertEquals(0, BigDecimal("600").compareTo(computed.computedRows[1].afterFormula))
+        assertEquals(0, BigDecimal("6000").compareTo(computed.subtotalAfterFormula))
+        assertTrue(PayrollEngine.formatRowEquation(computed.computedRows[0]).contains("[Borongan khusus]"))
+    }
+
+    @Test
+    fun perEmployeeAdjustmentsAreIsolatedAndDeductionsExcludedFromGrandAndMonthlyTotal() {
+        val ptColA = AdjustmentColumn(id = "a_pt", name = "Potongan PT", operation = AdjustmentOperation.SUBTRACT)
+        val bonusColA = AdjustmentColumn(id = "a_bonus", name = "Bonus", operation = AdjustmentOperation.ADD)
+
+        // Employee A: 1000 * 120 / 12 = 10.000; Bonus +2.000; Potongan PT -1.500 -> personal finalTotal = 10.500
+        val empA = CalculationMemberEntry(
+            id = "empA",
+            name = "Ani",
+            rows = listOf(CalculationRowItem(id = "r1", n1Text = "1000", n2Text = "120")),
+            adjustmentColumns = listOf(ptColA, bonusColA),
+            adjustmentValues = mapOf("a_pt" to "1500", "a_bonus" to "2000")
+        )
+        // Employee B: 2000 * 120 / 12 = 20.000; NO adjustment columns of their own!
+        val empB = CalculationMemberEntry(
+            id = "empB",
+            name = "Budi",
+            rows = listOf(CalculationRowItem(id = "r2", n1Text = "2000", n2Text = "120"))
+        )
+
+        val summary = PayrollEngine.computeCalculation(
+            calculationId = 10L,
+            scheduledDateTimeMillis = IndonesianDateFormatter.buildMillis(2026, 10, 10, 9, 0),
+            usesGlobalFormula = true,
+            customFormula = FormulaConfig(),
+            globalFormula = FormulaConfig(),
+            columns = emptyList(),
+            members = listOf(empA, empB),
+            roundingConfig = RoundingConfig.DEFAULT
+        )
+
+        // Isolation check: Employee A has 2 columns, Employee B has 0 columns
+        assertEquals(2, summary.members[0].effectiveColumns.size)
+        assertEquals(0, summary.members[1].effectiveColumns.size)
+        // Employee A personal net = 10.000 + 2.000 - 1.500 = 10.500
+        assertEquals(0, BigDecimal("10500").compareTo(summary.members[0].finalTotal))
+        // Calculation totals:
+        // Before adjustments (sebelum dipotong & ditambah) = 10.000 + 20.000 = 30.000
+        assertEquals(0, BigDecimal("30000").compareTo(summary.totalBeforeAdjustments))
+        // Additions = 2.000, Deductions (info only) = 1.500
+        assertEquals(0, BigDecimal("2000").compareTo(summary.totalAdditions))
+        assertEquals(0, BigDecimal("1500").compareTo(summary.totalDeductions))
+        // Grand total EXCLUDES deductions: 30.000 + 2.000 = 32.000 (NOT 30.500!)
+        assertEquals(0, BigDecimal("32000").compareTo(summary.grandTotal))
+
+        // Monthly summary also preserves pre-adjustment total and excludes deductions
+        val monthly = PayrollEngine.summarizeSavedCalculations(listOf(summary))
+        assertEquals(0, BigDecimal("30000").compareTo(monthly.totalBeforeAdjustments))
+        assertEquals(0, BigDecimal("2000").compareTo(monthly.totalAdditions))
+        assertEquals(0, BigDecimal("1500").compareTo(monthly.totalDeductions))
+        assertEquals(0, BigDecimal("32000").compareTo(monthly.grandTotal))
     }
 
     @Test
@@ -157,6 +255,7 @@ class PayrollCalculatorTest {
             id = "m1",
             name = "Ani",
             rows = listOf(CalculationRowItem(id = "r1", n1Text = "1000", n2Text = "120")),
+            adjustmentColumns = listOf(ptCol, bonusCol, kasbonCol, tunjanganCol),
             adjustmentValues = mapOf(
                 "c1" to "500",    // Potongan PT -500
                 "c2" to "2000",   // Bonus +2.000
@@ -169,12 +268,13 @@ class PayrollCalculatorTest {
         val result = PayrollEngine.computeMember(
             member = member,
             formula = formula,
-            columns = listOf(ptCol, bonusCol, kasbonCol, tunjanganCol)
+            columns = emptyList()
         )
 
-        // 10.000 - 500 + 2.000 + 0 = 11.500
+        // 10.000 - 500 + 2.000 + 0 = 11.500 (personal final), excluding deductions = 12.000
         assertEquals(0, BigDecimal("10000").compareTo(result.subtotalAfterFormula))
         assertEquals(0, BigDecimal("11500").compareTo(result.finalTotal))
+        assertEquals(0, BigDecimal("12000").compareTo(result.totalExcludingDeductions))
         assertNull(result.adjustmentAmounts["c3"])
         assertEquals(0, BigDecimal.ZERO.compareTo(result.adjustmentAmounts["c4"]))
     }

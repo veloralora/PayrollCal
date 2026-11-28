@@ -17,6 +17,7 @@ import com.example.domain.ComputedCalculationSummary
 import com.example.domain.FormulaConfig
 import com.example.domain.FormulaOperation
 import com.example.domain.IndonesianDateFormatter
+import com.example.domain.MonthlyTotalSummary
 import com.example.domain.PayrollCalculator
 import com.example.domain.PayrollEngine
 import com.example.domain.PayrollMonth
@@ -175,8 +176,12 @@ class PayrollViewModel(
         PayrollEngine.filterCalculationsByMonth(calcs, month)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val monthlyTotalPayroll: StateFlow<BigDecimal> = monthlySavedCalculations
-        .map { PayrollEngine.sumSavedCalculations(it) }
+    val monthlyTotalSummary: StateFlow<MonthlyTotalSummary> = monthlySavedCalculations
+        .map { PayrollEngine.summarizeSavedCalculations(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MonthlyTotalSummary())
+
+    val monthlyTotalPayroll: StateFlow<BigDecimal> = monthlyTotalSummary
+        .map { it.grandTotal }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BigDecimal.ZERO)
 
     val currentMonthCalculations: StateFlow<List<ComputedCalculationSummary>> = savedCalculations
@@ -387,8 +392,15 @@ class PayrollViewModel(
                     .getOrDefault(FormulaOperation.DIVIDE),
                 operand = entity.formulaOperand
             )
+            val legacyColumns = PayrollJsonCodec.decodeColumns(entity.columnsJson)
             val decodedMembers = PayrollJsonCodec.decodeMembers(entity.membersJson).map { m ->
-                if (m.rows.isEmpty()) m.copy(rows = listOf(CalculationRowItem())) else m
+                val withRows = if (m.rows.isEmpty()) m.copy(rows = listOf(CalculationRowItem())) else m
+                val resolvedCols = PayrollEngine.resolveMemberColumns(withRows, legacyColumns)
+                if (resolvedCols != withRows.adjustmentColumns) {
+                    withRows.copy(adjustmentColumns = resolvedCols)
+                } else {
+                    withRows
+                }
             }
             _activeDraft.value = ActiveCalculationDraft(
                 isInitialized = true,
@@ -396,7 +408,7 @@ class PayrollViewModel(
                 scheduledDateTimeMillis = entity.scheduledDateTimeMillis,
                 usesGlobalFormula = entity.usesGlobalFormula,
                 customFormula = customFormula,
-                columns = PayrollJsonCodec.decodeColumns(entity.columnsJson),
+                columns = emptyList(),
                 members = decodedMembers
             )
             _autoSaveStatus.value = AutoSaveStatus.SAVED
@@ -458,7 +470,13 @@ class PayrollViewModel(
         scheduleAutoSave()
     }
 
-    fun updateMemberRow(memberId: String, rowId: String, n1: String? = null, n2: String? = null) {
+    fun updateMemberRow(
+        memberId: String,
+        rowId: String,
+        n1: String? = null,
+        n2: String? = null,
+        note: String? = null
+    ) {
         _activeDraft.update { draft ->
             draft.copy(
                 members = draft.members.map { m ->
@@ -468,8 +486,39 @@ class PayrollViewModel(
                                 if (r.id == rowId) {
                                     r.copy(
                                         n1Text = n1 ?: r.n1Text,
-                                        n2Text = n2 ?: r.n2Text
+                                        n2Text = n2 ?: r.n2Text,
+                                        note = note ?: r.note
                                     )
+                                } else r
+                            }
+                        )
+                    } else m
+                }
+            )
+        }
+        scheduleAutoSave()
+    }
+
+    /**
+     * Toggles the trailing formula (e.g. ÷ 12) ONLY for the single clicked row of the given employee,
+     * leaving all other rows, employees, and calculation dates completely unaffected.
+     */
+    fun toggleMemberRowFormula(memberId: String, rowId: String) {
+        val currentGlobal = globalFormula.value
+        _activeDraft.update { draft ->
+            val listEffectiveEnabled = if (draft.usesGlobalFormula) {
+                currentGlobal.enabled
+            } else {
+                draft.customFormula.enabled
+            }
+            draft.copy(
+                members = draft.members.map { m ->
+                    if (m.id == memberId) {
+                        m.copy(
+                            rows = m.rows.map { r ->
+                                if (r.id == rowId) {
+                                    val currentlyEnabled = r.formulaEnabledOverride ?: listEffectiveEnabled
+                                    r.copy(formulaEnabledOverride = !currentlyEnabled)
                                 } else r
                             }
                         )
@@ -548,9 +597,9 @@ class PayrollViewModel(
         emitMessage("Daftar kembali menggunakan Rumus Global (${global.shortLabel()})")
     }
 
-    // ---- Dynamic Adjustment Columns (Potongan & Penambahan) ----
+    // ---- Per-Employee Isolated Adjustment Columns (Potongan & Penambahan) ----
 
-    fun addAdjustmentColumn(name: String, operation: AdjustmentOperation) {
+    fun addAdjustmentColumnForMember(memberId: String, name: String, operation: AdjustmentOperation) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
         val newCol = AdjustmentColumn(
@@ -559,36 +608,57 @@ class PayrollViewModel(
             operation = operation
         )
         _activeDraft.update { draft ->
-            draft.copy(columns = draft.columns + newCol)
+            draft.copy(
+                members = draft.members.map { m ->
+                    if (m.id == memberId) {
+                        m.copy(adjustmentColumns = m.adjustmentColumns + newCol)
+                    } else m
+                }
+            )
         }
         scheduleAutoSave()
-        emitMessage("Kolom \"${newCol.headerLabel()}\" ditambahkan")
+        emitMessage("Kolom \"${newCol.headerLabel()}\" ditambahkan khusus untuk karyawan ini")
     }
 
-    fun updateAdjustmentColumn(columnId: String, name: String, operation: AdjustmentOperation) {
+    fun updateAdjustmentColumnForMember(
+        memberId: String,
+        columnId: String,
+        name: String,
+        operation: AdjustmentOperation
+    ) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
         _activeDraft.update { draft ->
             draft.copy(
-                columns = draft.columns.map { col ->
-                    if (col.id == columnId) col.copy(name = trimmed, operation = operation) else col
+                members = draft.members.map { m ->
+                    if (m.id == memberId) {
+                        m.copy(
+                            adjustmentColumns = m.adjustmentColumns.map { col ->
+                                if (col.id == columnId) col.copy(name = trimmed, operation = operation) else col
+                            }
+                        )
+                    } else m
                 }
             )
         }
         scheduleAutoSave()
     }
 
-    fun deleteAdjustmentColumn(columnId: String) {
+    fun deleteAdjustmentColumnForMember(memberId: String, columnId: String) {
         _activeDraft.update { draft ->
             draft.copy(
-                columns = draft.columns.filterNot { it.id == columnId },
                 members = draft.members.map { m ->
-                    m.copy(adjustmentValues = m.adjustmentValues - columnId)
+                    if (m.id == memberId) {
+                        m.copy(
+                            adjustmentColumns = m.adjustmentColumns.filterNot { it.id == columnId },
+                            adjustmentValues = m.adjustmentValues - columnId
+                        )
+                    } else m
                 }
             )
         }
         scheduleAutoSave()
-        emitMessage("Kolom penyesuaian dihapus")
+        emitMessage("Kolom penyesuaian dihapus untuk karyawan ini")
     }
 
     fun updateMemberAdjustmentValue(memberId: String, columnId: String, newValue: String) {

@@ -23,13 +23,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DocumentScanner
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -38,10 +36,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -58,12 +54,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.domain.AdjustmentColumn
-import com.example.domain.AdjustmentOperation
 import com.example.domain.ComputedCalculationSummary
 import com.example.domain.ComputedMemberResult
 import com.example.domain.FormulaConfig
@@ -72,7 +65,6 @@ import com.example.domain.PayrollCalculator
 import com.example.domain.PayrollEngine
 import com.example.domain.RoundingConfig
 import com.example.ui.ActiveCalculationDraft
-import com.example.ui.components.AdjustmentColumnDialog
 import com.example.ui.components.FormulaControlBar
 import com.example.ui.components.FormulaEditorSheet
 import com.example.ui.components.RoundingRuleSelectorCard
@@ -85,8 +77,10 @@ import com.example.ui.theme.PtDeductionAccent
 
 /**
  * Ringkasan Tabel Perhitungan across all employees:
- * Shows each employee's subtotal from their N1 × N2 rows (tap name/subtotal to open their row screen),
- * plus editable cells for every dynamic Potongan/Penambahan column, FormulaControlBar, and Simpan Total.
+ * Shows each employee's Jumlah × Harga subtotal, isolated per-employee Penambahan (+) and
+ * Potongan (−), and net employee total. Tapping any employee row opens their dedicated
+ * EmployeeCalculationScreen where their private adjustments and rows are edited.
+ * Bottom bar clearly shows Total Sebelum Dipotong & Ditambah and Total Perhitungan (potongan excluded).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,10 +96,6 @@ fun CalculationTableScreen(
     onApplyFormulaGlobal: (FormulaConfig) -> Unit,
     onUseGlobalFormula: () -> Unit,
     onUpdateRounding: (RoundingConfig) -> Unit,
-    onAddColumn: (String, AdjustmentOperation) -> Unit,
-    onUpdateColumn: (String, String, AdjustmentOperation) -> Unit,
-    onDeleteColumn: (String) -> Unit,
-    onUpdateAdjustmentValue: (String, String, String) -> Unit,
     onSaveTotal: () -> Unit,
     onOpenScan: () -> Unit,
     onCopiedFeedback: (String) -> Unit,
@@ -113,8 +103,6 @@ fun CalculationTableScreen(
 ) {
     val context = LocalContext.current
     var showFormulaSheet by remember { mutableStateOf(false) }
-    var showAddColumnDialog by remember { mutableStateOf(false) }
-    var editingColumn by remember { mutableStateOf<AdjustmentColumn?>(null) }
 
     val tableHorizontalScroll = rememberScrollState()
 
@@ -214,50 +202,30 @@ fun CalculationTableScreen(
 
             item {
                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Card(
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .widthIn(max = 960.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            .widthIn(max = 960.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Kolom Potongan & Penambahan",
-                                style = MaterialTheme.typography.titleSmall
+                            Icon(
+                                imageVector = Icons.Filled.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
                             )
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedButton(
-                                    onClick = { showAddColumnDialog = true },
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.testTag("table_add_column_button")
-                                ) {
-                                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Tambah Kolom")
-                                }
-
-                                computed.columns.forEach { col ->
-                                    InputChip(
-                                        selected = false,
-                                        onClick = { editingColumn = col },
-                                        label = { Text(col.headerLabel()) },
-                                        trailingIcon = {
-                                            Icon(Icons.Filled.Edit, contentDescription = "Edit ${col.name}", modifier = Modifier.size(15.dp))
-                                        }
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "Penambahan & Potongan diatur terpisah per karyawan. Ketuk nama karyawan di tabel untuk menambah/ubah. Potongan tidak dimasukkan ke Total Perhitungan.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -284,7 +252,7 @@ fun CalculationTableScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                TableHeaderCell("Nama (Ketuk utk Hitung)", width = 148.dp)
+                                TableHeaderCell("Nama (Ketuk utk Edit)", width = 148.dp)
                                 TableHeaderCell(
                                     text = if (computed.effectiveFormula.enabled) {
                                         "Hasil (${computed.effectiveFormula.shortLabel()})"
@@ -293,14 +261,17 @@ fun CalculationTableScreen(
                                     },
                                     width = 140.dp
                                 )
-                                computed.columns.forEach { col ->
-                                    TableHeaderCell(
-                                        text = col.headerLabel(),
-                                        width = 122.dp,
-                                        accent = if (col.operation == AdjustmentOperation.SUBTRACT) PtDeductionAccent else EmeraldVerified
-                                    )
-                                }
-                                TableHeaderCell("Total Akhir", width = 128.dp)
+                                TableHeaderCell(
+                                    text = "Penambahan (+)",
+                                    width = 122.dp,
+                                    accent = EmeraldVerified
+                                )
+                                TableHeaderCell(
+                                    text = "Potongan (−) Info",
+                                    width = 126.dp,
+                                    accent = PtDeductionAccent
+                                )
+                                TableHeaderCell("Total Karyawan", width = 128.dp)
                             }
 
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -309,11 +280,7 @@ fun CalculationTableScreen(
                                 SummaryTableRow(
                                     index = idx,
                                     result = rowResult,
-                                    columns = computed.columns,
-                                    onOpenEmployee = { onOpenEmployeeDetail(rowResult.member.id) },
-                                    onAdjChange = { colId, value ->
-                                        onUpdateAdjustmentValue(rowResult.member.id, colId, value)
-                                    }
+                                    onOpenEmployee = { onOpenEmployeeDetail(rowResult.member.id) }
                                 )
                                 if (idx < computed.members.lastIndex) {
                                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -344,18 +311,34 @@ fun CalculationTableScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "TOTAL PERHITUNGAN",
+                                text = "TOTAL PERHITUNGAN (TANPA POTONGAN)",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "Sebelum pembulatan: Rp ${PayrollCalculator.formatRawNumber(computed.totalRawBeforeRounding)}",
+                                text = "Sebelum dipotong & ditambah: ${PayrollCalculator.formatRupiah(computed.totalBeforeAdjustments)}",
                                 style = NumericSmallStyle,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (computed.totalAdditions.signum() > 0 || computed.totalDeductions.signum() > 0) {
+                                val parts = buildList {
+                                    if (computed.totalAdditions.signum() > 0) {
+                                        add("Penambahan: +${PayrollCalculator.formatRupiah(computed.totalAdditions)}")
+                                    }
+                                    if (computed.totalDeductions.signum() > 0) {
+                                        add("Potongan (info): ${PayrollCalculator.formatRupiah(computed.totalDeductions)}")
+                                    }
+                                }
+                                Text(
+                                    text = parts.joinToString(" • "),
+                                    style = NumericSmallStyle,
+                                    color = if (computed.totalDeductions.signum() > 0) PtDeductionAccent else EmeraldVerified
+                                )
+                            }
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = PayrollCalculator.formatRupiah(computed.grandTotal),
                             style = NumericHeadlineStyle.copy(fontWeight = FontWeight.Bold),
@@ -412,31 +395,6 @@ fun CalculationTableScreen(
             onUseGlobalFormula = onUseGlobalFormula
         )
     }
-
-    if (showAddColumnDialog) {
-        AdjustmentColumnDialog(
-            onDismiss = { showAddColumnDialog = false },
-            onConfirm = { name, op ->
-                onAddColumn(name, op)
-                showAddColumnDialog = false
-            }
-        )
-    }
-
-    editingColumn?.let { col ->
-        AdjustmentColumnDialog(
-            initialColumn = col,
-            onDismiss = { editingColumn = null },
-            onConfirm = { name, op ->
-                onUpdateColumn(col.id, name, op)
-                editingColumn = null
-            },
-            onDelete = {
-                onDeleteColumn(col.id)
-                editingColumn = null
-            }
-        )
-    }
 }
 
 @Composable
@@ -460,9 +418,7 @@ private fun TableHeaderCell(
 private fun SummaryTableRow(
     index: Int,
     result: ComputedMemberResult,
-    columns: List<AdjustmentColumn>,
-    onOpenEmployee: () -> Unit,
-    onAdjChange: (String, String) -> Unit
+    onOpenEmployee: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -470,15 +426,12 @@ private fun SummaryTableRow(
                 if (index % 2 == 0) MaterialTheme.colorScheme.surface
                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
             )
+            .clickable(onClick = onOpenEmployee)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .width(148.dp)
-                .clickable(onClick = onOpenEmployee)
-        ) {
+        Column(modifier = Modifier.width(148.dp)) {
             Text(
                 text = result.member.name,
                 style = MaterialTheme.typography.titleSmall,
@@ -494,11 +447,7 @@ private fun SummaryTableRow(
             )
         }
 
-        Column(
-            modifier = Modifier
-                .width(140.dp)
-                .clickable(onClick = onOpenEmployee)
-        ) {
+        Column(modifier = Modifier.width(140.dp)) {
             Text(
                 text = PayrollCalculator.formatRupiah(result.subtotalAfterFormula),
                 style = NumericFormulaStyle.copy(fontWeight = FontWeight.SemiBold),
@@ -511,20 +460,27 @@ private fun SummaryTableRow(
             )
         }
 
-        columns.forEach { col ->
-            val cellText = result.member.adjustmentValues[col.id].orEmpty()
-            OutlinedTextField(
-                value = cellText,
-                onValueChange = { onAdjChange(col.id, it) },
-                placeholder = { Text("", style = NumericSmallStyle) },
-                singleLine = true,
-                textStyle = NumericFormulaStyle,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier
-                    .width(122.dp)
-                    .testTag("table_adj_${index}_${col.id}")
-            )
-        }
+        Text(
+            text = if (result.totalAdditions.signum() > 0) {
+                "+ ${PayrollCalculator.formatRupiah(result.totalAdditions)}"
+            } else "–",
+            style = NumericFormulaStyle.copy(
+                fontWeight = if (result.totalAdditions.signum() > 0) FontWeight.SemiBold else FontWeight.Normal
+            ),
+            color = if (result.totalAdditions.signum() > 0) EmeraldVerified else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(122.dp)
+        )
+
+        Text(
+            text = if (result.totalDeductions.signum() > 0) {
+                "− ${PayrollCalculator.formatRupiah(result.totalDeductions)}"
+            } else "–",
+            style = NumericFormulaStyle.copy(
+                fontWeight = if (result.totalDeductions.signum() > 0) FontWeight.SemiBold else FontWeight.Normal
+            ),
+            color = if (result.totalDeductions.signum() > 0) PtDeductionAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(126.dp)
+        )
 
         Surface(
             shape = RoundedCornerShape(10.dp),

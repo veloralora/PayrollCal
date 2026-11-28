@@ -427,18 +427,32 @@ fun CalculationMembersScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "TOTAL PERHITUNGAN",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "Sebelum pembulatan: Rp ${PayrollCalculator.formatRawNumber(computed.totalRawBeforeRounding)}",
+                                text = "Sebelum dipotong & ditambah: ${PayrollCalculator.formatRupiah(computed.totalBeforeAdjustments)}",
                                 style = NumericSmallStyle,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (computed.totalDeductions.signum() > 0) {
+                                Text(
+                                    text = "Potongan (info, tdk masuk total): ${PayrollCalculator.formatRupiah(computed.totalDeductions)}",
+                                    style = NumericSmallStyle,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            } else {
+                                Text(
+                                    text = "Sebelum pembulatan: Rp ${PayrollCalculator.formatRawNumber(computed.totalRawBeforeRounding)}",
+                                    style = NumericSmallStyle,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = PayrollCalculator.formatRupiah(computed.grandTotal),
                             style = NumericHeadlineStyle.copy(fontWeight = FontWeight.Bold),
